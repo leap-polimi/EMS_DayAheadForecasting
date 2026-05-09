@@ -1,0 +1,38 @@
+# Private credentials
+EL_LOAD/.env
+TH_LOAD/.env
+DAM_PRICES/.env
+
+# OptimoApi Functions
+EL_LOAD/OptimoApi.py
+TH_LOAD/OptimoApi.py
+DAM_PRICES/OptimoApi.py
+
+# Python cache files
+EL_LOAD/__pycache__/
+TH_LOAD/__pycache__/
+DAM_PRICES/__pycache__/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Generated datasets and outputs
+EL_LOAD/dataset.xlsx
+EL_LOAD/models/
+EL_LOAD/results/
+EL_LOAD/forecasts/
+
+TH_LOAD/dataset.xlsx
+TH_LOAD/models/
+TH_LOAD/results/
+TH_LOAD/forecasts/
+
+DAM_PRICES/dataset.xlsx
+DAM_PRICES/models/
+DAM_PRICES/results/
+DAM_PRICES/forecasts/
+
+
+
