@@ -3,6 +3,7 @@ message: "If you use this software, please cite it as below."
 title: "EMS_DayAheadForecasting"
 version: "1.0.0"
 date-released: "2026-05-10"
+doi: "10.5281/zenodo.20109598"
 
 authors:
   - family-names: "Scrocca"
@@ -13,6 +14,7 @@ authors:
     affiliation: "Politecnico di Milano, Department of Energy"
 
 repository-code: "https://github.com/leap-polimi/EMS_DayAheadForecasting"
+url: "https://doi.org/10.5281/zenodo.20109598"
 license: "GPL-3.0-or-later"
 
 abstract: "Python workflows for day-ahead forecasting of uncertain inputs required by an Energy Management System, including electrical load, thermal load, and day-ahead market prices."
@@ -23,3 +25,18 @@ keywords:
   - "thermal load forecasting"
   - "market price forecasting"
   - "energy management system"
+
+preferred-citation:
+  type: software
+  title: "EMS_DayAheadForecasting"
+  version: "1.0.0"
+  date-released: "2026-05-10"
+  doi: "10.5281/zenodo.20109598"
+  url: "https://doi.org/10.5281/zenodo.20109598"
+  authors:
+    - family-names: "Scrocca"
+      given-names: "Andrea"
+      affiliation: "Politecnico di Milano, Department of Energy"
+    - family-names: "Bovera"
+      given-names: "Filippo"
+      affiliation: "Politecnico di Milano, Department of Energy"

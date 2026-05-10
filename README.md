@@ -1,5 +1,7 @@
 # EMS_DayAheadForecasting
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.20109598.svg)](https://doi.org/10.5281/zenodo.20109598)
+
 This repository contains Python scripts for forecasting the uncertain inputs required by the Energy Management System (EMS) in a day-ahead setting.
 
 The current implementation includes workflows for:
@@ -9,6 +11,30 @@ The current implementation includes workflows for:
 * day-ahead market price forecasting, contained in the `DAM_PRICES` folder.
 
 The same structure can be replicated for additional uncertain inputs. In particular, the `TH_LOAD` workflow can also be adapted and used for forecasting cooling load (`COOL_LOAD`), since the required workflow structure is analogous: historical dataset creation, model training, automatic day-ahead forecasting, and automatic retraining.
+
+## Authorship and contributions
+
+This repository is authored by:
+- Andrea Scrocca
+- Filippo Bovera
+
+Affiliation: Politecnico di Milano, Department of Energy
+
+## Citation
+
+If you use this software in scientific work, please cite the archived release:
+
+Scrocca, A., & Bovera, F. (2026). *EMS_DayAheadForecasting* (Version 1.0.0) [Software]. Zenodo. https://doi.org/10.5281/zenodo.20109598
+
+A machine-readable citation file is also available in [`CITATION.cff`](CITATION.cff).
+
+## License
+
+This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or any later version.
+
+This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along with this program. If not, see https://www.gnu.org/licenses/.
 
 ---
 
@@ -526,24 +552,3 @@ EL_LOAD/.env.example
 TH_LOAD/.env.example
 DAM_PRICES/.env.example
 ```
-
----
-
-# Credits
-
-This repository was developed by:
-
-* Andrea Scrocca
-* Filippo Bovera
-
-Affiliation: Politecnico di Milano, Department of Energy
-
----
-
-# License
-
-This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or any later version.
-
-This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License along with this program. If not, see https://www.gnu.org/licenses/.
