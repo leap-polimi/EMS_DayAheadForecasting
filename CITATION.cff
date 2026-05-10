@@ -1,0 +1,25 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "EMS_DayAheadForecasting"
+version: "1.0.0"
+date-released: "2026-05-10"
+
+authors:
+  - family-names: "Scrocca"
+    given-names: "Andrea"
+    affiliation: "Politecnico di Milano, Department of Energy"
+  - family-names: "Bovera"
+    given-names: "Filippo"
+    affiliation: "Politecnico di Milano, Department of Energy"
+
+repository-code: "https://github.com/leap-polimi/EMS_DayAheadForecasting"
+license: "GPL-3.0-or-later"
+
+abstract: "Python workflows for day-ahead forecasting of uncertain inputs required by an Energy Management System, including electrical load, thermal load, and day-ahead market prices."
+
+keywords:
+  - "day-ahead forecasting"
+  - "electrical load forecasting"
+  - "thermal load forecasting"
+  - "market price forecasting"
+  - "energy management system"
