@@ -4,10 +4,11 @@ This repository contains Python scripts for forecasting the uncertain inputs req
 
 The current implementation includes workflows for:
 
-- electrical load forecasting, contained in the `EL_LOAD` folder;
-- thermal load forecasting, contained in the `TH_LOAD` folder.
+* electrical load forecasting, contained in the `EL_LOAD` folder;
+* thermal load forecasting, contained in the `TH_LOAD` folder;
+* day-ahead market price forecasting, contained in the `DAM_PRICES` folder.
 
-The same structure can be replicated for cooling load and day-ahead market prices.
+The same structure can be replicated for additional uncertain inputs. In particular, the `TH_LOAD` workflow can also be adapted and used for forecasting cooling load (`COOL_LOAD`), since the required workflow structure is analogous: historical dataset creation, model training, automatic day-ahead forecasting, and automatic retraining.
 
 ---
 
@@ -25,14 +26,20 @@ EMS_DayAheadForecasting/
 |   |-- 0_EL_LOAD_creation_dataset.py
 |   |-- 1_EL_LOAD_model_training.py
 |   |-- 2_EL_LOAD_automatic_forecasting.py
-|   `-- 3_EL_LOAD_automatic_retraining.py
+|   `-- 2_EL_LOAD_automatic_retraining.py
 |
-`-- TH_LOAD/
+|-- TH_LOAD/
+|   |-- .env.example
+|   |-- 0_TH_LOAD_creation_dataset.py
+|   |-- 1_TH_LOAD_model_training.py
+|   |-- 2_TH_LOAD_automatic_forecasting.py
+|   `-- 2_TH_LOAD_automatic_retraining.py
+|
+`-- DAM_PRICES/
     |-- .env.example
-    |-- 0_TH_LOAD_creation_dataset.py
-    |-- 1_TH_LOAD_model_training.py
-    |-- 2_TH_LOAD_automatic_forecasting.py
-    `-- 3_TH_LOAD_automatic_retraining.py
+    |-- 2_DAM_PRICES_automatic_forecasting_retraining.py
+    |-- PUN_dataset_final.csv
+    `-- NORD_dataset_final.csv
 ```
 
 Each workflow requires a private `.env` file to run locally. The `.env` files contain private credentials and local configuration values and must **never** be uploaded to GitHub.
@@ -66,11 +73,11 @@ This script creates the historical dataset used to train the electrical load for
 
 It downloads and processes:
 
-- electrical consumption measurements from Optimo Cloud;
-- PV production measurements;
-- CHP and main grid exchange measurements;
-- weather data from Open-Meteo;
-- calendar features, such as month, weekday, quarter-hour, holidays, and building opening/closing status.
+* electrical consumption measurements from Optimo Cloud;
+* PV production measurements;
+* CHP and main grid exchange measurements;
+* weather data from Open-Meteo;
+* calendar features, such as month, weekday, quarter-hour, holidays, and building opening/closing status.
 
 The final output is an Excel dataset, usually saved as:
 
@@ -104,9 +111,9 @@ This script trains one Random Forest model for each electrical load target.
 
 The targets include:
 
-- gross electrical consumption of each cabin;
-- total gross electrical consumption;
-- total net electrical consumption.
+* gross electrical consumption of each cabin;
+* total gross electrical consumption;
+* total net electrical consumption.
 
 The script:
 
@@ -221,12 +228,14 @@ This is useful for testing the retraining logic on an existing dataset.
 
 The `TH_LOAD` folder contains the full workflow used to create, train, run, and update day-ahead thermal load forecasting models for the EMS.
 
-As for the electrical load workflow, the thermal workflow exploits the interaction with **Optimo Cloud** to retrieve measured thermal load data from the PoliGrid/MEMG infrastructure at Politecnico di Milano. It also interacts with **Open-Meteo** to retrieve historical weather data for dataset creation and retraining, and weather forecasts for daily day-ahead prediction.
+As for the electrical load workflow, the thermal workflow exploits the interaction with **Optimo Cloud** to retrieve measured thermal load data from the PoliGrid infrastructure at Politecnico di Milano. It also interacts with **Open-Meteo** to retrieve historical weather data for dataset creation and retraining, and weather forecasts for daily day-ahead prediction.
+
+The same workflow can also be adapted for cooling load forecasting (`COOL_LOAD`). In that case, the thermal load target variables and measurement identifiers should be replaced by the corresponding cooling load measurements, while keeping the same overall structure.
 
 The thermal load workflow currently considers two forecasting targets:
 
-- `THERMAL_LOAD_kW`: total campus thermal load, computed as the sum of the thermal loads measured at the campus substations;
-- `DH_THERMAL_LOAD_kW`: district-heating thermal load, derived from measurements collected at the inlet and outlet of the district heating network.
+* `THERMAL_LOAD_kW`: total campus thermal load, computed as the sum of the thermal loads measured at the campus substations;
+* `DH_THERMAL_LOAD_kW`: district-heating thermal load, derived from measurements collected at the inlet and outlet of the district heating network.
 
 The workflow is organized into four scripts:
 
@@ -247,11 +256,11 @@ This script creates the historical dataset used to train the thermal load foreca
 
 It downloads and processes:
 
-- measured thermal load data from Optimo Cloud;
-- measured district-heating thermal load data from Optimo Cloud;
-- weather data from Open-Meteo;
-- calendar features, such as month, weekday, quarter-hour, holidays, and building opening/closing status;
-- derived features such as `T_open`, which combines outdoor temperature with the building opening/closing status.
+* measured thermal load data from Optimo Cloud;
+* measured district-heating thermal load data from Optimo Cloud;
+* weather data from Open-Meteo;
+* calendar features, such as month, weekday, quarter-hour, holidays, and building opening/closing status;
+* derived features such as `T_open`, which combines outdoor temperature with the building opening/closing status.
 
 The final output is an Excel dataset, usually saved as:
 
@@ -285,8 +294,8 @@ This script trains Random Forest models for the thermal load targets.
 
 The targets currently include:
 
-- `THERMAL_LOAD_kW`;
-- `DH_THERMAL_LOAD_kW`.
+* `THERMAL_LOAD_kW`;
+* `DH_THERMAL_LOAD_kW`.
 
 The script:
 
@@ -397,6 +406,95 @@ This is useful for testing the retraining logic on an existing dataset.
 
 ---
 
+# Day-Ahead Market Price Forecasting (`DAM_PRICES`)
+
+The `DAM_PRICES` folder contains the workflow used to forecast day-ahead market prices for the EMS.
+
+This workflow uses the [**GME API**](https://www.mercatoelettrico.org/) to retrieve market price data from the Italian electricity market. The forecasting model is based on the LEAR approach and produces hourly day-ahead forecasts for:
+
+* `PUN`: the Italian national single price;
+* `NORD`: the northern Italian market zone price.
+
+The DAM price workflow assumes that the historical datasets are already available in the `DAM_PRICES` folder with the following names:
+
+```text
+DAM_PRICES/PUN_dataset_final.csv
+DAM_PRICES/NORD_dataset_final.csv
+```
+
+These CSV files must contain at least the following columns:
+
+```text
+italian datetime
+datetime
+price
+```
+
+where `datetime` is the UTC timestamp and `price` is the historical market price in EUR/MWh.
+
+The workflow is organized as follows:
+
+```text
+DAM_PRICES/
+|-- .env.example
+|-- 2_DAM_PRICES_automatic_forecasting_retraining.py
+|-- PUN_dataset_final.csv
+`-- NORD_dataset_final.csv
+```
+
+---
+
+## `2_DAM_PRICES_automatic_forecasting_retraining.py`
+
+This script runs the automatic day-ahead price forecasting workflow.
+
+It is intended to be executed automatically every day, for example after the day-ahead market results are available.
+
+The script:
+
+1. checks the latest market dates available in the PUN and NORD CSV datasets;
+2. downloads from the GME API only the missing market dates required for the forecast;
+3. appends the missing data to the historical CSV datasets;
+4. runs the LEAR model to forecast the selected day-ahead market prices;
+5. saves the forecast files locally;
+6. optionally uploads selected forecast outputs to Optimo Cloud.
+
+If the PUN and NORD datasets already contain the market data needed for the forecast, the script skips the GME download step.
+
+The output is usually saved in:
+
+```text
+DAM_PRICES/forecasts/
+```
+
+Typical command:
+
+```bash
+python DAM_PRICES/2_DAM_PRICES_automatic_forecasting_retraining.py
+```
+
+Forecast a specific date:
+
+```bash
+python DAM_PRICES/2_DAM_PRICES_automatic_forecasting_retraining.py --forecast-date 2026-05-11
+```
+
+Run locally without uploading results to Optimo:
+
+```bash
+python DAM_PRICES/2_DAM_PRICES_automatic_forecasting_retraining.py --no-upload
+```
+
+Force the script to skip the GME update and use only the existing CSV datasets:
+
+```bash
+python DAM_PRICES/2_DAM_PRICES_automatic_forecasting_retraining.py --no-upload --skip-gme-update
+```
+
+This is useful for testing or when the required market data are already present in the local datasets.
+
+---
+
 # Required local configuration
 
 Each user must create a private `.env` file inside each workflow folder that they want to run.
@@ -413,6 +511,12 @@ For the thermal load workflow:
 TH_LOAD/.env
 ```
 
+For the day-ahead market price workflow:
+
+```text
+DAM_PRICES/.env
+```
+
 These files contain private credentials and local configuration values. They must **never** be committed to GitHub.
 
 Public templates are provided as:
@@ -420,6 +524,26 @@ Public templates are provided as:
 ```text
 EL_LOAD/.env.example
 TH_LOAD/.env.example
+DAM_PRICES/.env.example
 ```
 
 ---
+
+# Credits
+
+This repository was developed by:
+
+* Andrea Scrocca
+* Filippo Bovera
+
+Affiliation: Politecnico di Milano, Department of Energy
+
+---
+
+# License
+
+This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or any later version.
+
+This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along with this program. If not, see https://www.gnu.org/licenses/.

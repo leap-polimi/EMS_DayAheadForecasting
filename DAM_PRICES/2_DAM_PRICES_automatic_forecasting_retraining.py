@@ -1,18 +1,52 @@
 """Run day-ahead market price forecasts for PUN and NORD.
 
-This script is designed for repository publication:
+This script is intended for the automatic daily forecasting/retraining step of
+the DAM price workflow.
+
+Important:
+Before running this script for the first time, the historical price datasets
+must already be available in the `DAM_PRICES` folder with the following names:
+
+    DAM_PRICES/PUN_dataset_final.csv
+    DAM_PRICES/NORD_dataset_final.csv
+
+These files are used as the historical input for the LEAR model. They must
+contain at least the following columns:
+
+    italian datetime
+    datetime
+    price
+
+where `datetime` is the UTC timestamp and `price` is the historical market
+price in EUR/MWh.
+
+At each execution, the script:
+1. checks the latest market dates available in the PUN and NORD CSV datasets;
+2. downloads from GME only the missing market dates needed for the forecast;
+3. appends the missing prices to the existing historical CSV datasets;
+4. runs the LEAR model to forecast the selected day-ahead prices;
+5. saves the forecast files locally;
+6. optionally uploads the forecasts to Optimo Cloud.
+
+If the CSV datasets already contain data up to the market day required for the
+forecast, the GME API is not called.
+
+The script is designed for repository publication:
 - GME and Optimo credentials are read from environment variables.
 - Paths, forecast date, calibration window, and upload behavior are configurable.
 - No private usernames, passwords, API keys, or secrets are hard-coded.
 
 Typical usage from the external repository folder:
-    python DAM_PRICES/2_DAM_PRICES_automatic_forecasting.py
+    python DAM_PRICES/2_DAM_PRICES_automatic_forecasting_retraining.py
 
 Forecast a specific local date instead of tomorrow:
-    python DAM_PRICES/2_DAM_PRICES_automatic_forecasting.py --forecast-date 2025-10-01
+    python DAM_PRICES/2_DAM_PRICES_automatic_forecasting_retraining.py --forecast-date 2026-05-11
 
 Run locally without uploading to Optimo:
-    python DAM_PRICES/2_DAM_PRICES_automatic_forecasting.py --no-upload
+    python DAM_PRICES/2_DAM_PRICES_automatic_forecasting_retraining.py --no-upload
+
+Force the script to avoid GME and use the existing CSV datasets only:
+    python DAM_PRICES/2_DAM_PRICES_automatic_forecasting_retraining.py --no-upload --skip-gme-update
 """
 
 from __future__ import annotations
@@ -23,6 +57,7 @@ import datetime as dt
 import io
 import json
 import os
+import time
 import zipfile
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -137,6 +172,7 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument(
         "--price-granularity",
         default=os.getenv("PRICE_GRANULARITY", "PT60"),
+        choices=["PT60", "PT15"],
         help="GME price granularity. Default: PT60 for hourly prices.",
     )
 
@@ -163,6 +199,22 @@ def parse_arguments() -> argparse.Namespace:
         type=int,
         default=int(os.getenv("CALIBRATION_WINDOW_DAYS", "364")),
         help="Number of historical days used by LEAR recalibration. Default: 364.",
+    )
+
+    parser.add_argument(
+        "--gme-request-sleep-seconds",
+        type=float,
+        default=float(os.getenv("GME_REQUEST_SLEEP_SECONDS", "0.2")),
+        help="Pause between multiple GME daily requests. Default: 0.2.",
+    )
+
+    parser.add_argument(
+        "--skip-gme-update",
+        action="store_true",
+        help=(
+            "Skip the GME API update step and run the forecast using the existing "
+            "PUN_dataset_final.csv and NORD_dataset_final.csv files."
+        ),
     )
 
     parser.add_argument(
@@ -234,6 +286,33 @@ def get_gme_auth_token(base_url: str) -> str:
 # ======================================================================
 
 
+def find_zone_price_records(json_data):
+    """Recursively find records containing Zone and Price fields in decoded GME JSON."""
+    if isinstance(json_data, list):
+        if json_data and isinstance(json_data[0], dict):
+            first_keys = set(json_data[0].keys())
+            if {"Zone", "Price"}.issubset(first_keys):
+                return json_data
+
+        for item in json_data:
+            found = find_zone_price_records(item)
+            if found is not None:
+                return found
+
+    if isinstance(json_data, dict):
+        keys = set(json_data.keys())
+        if {"Zone", "Price"}.issubset(keys):
+            return [json_data]
+
+        for value in json_data.values():
+            found = find_zone_price_records(value)
+            if found is not None:
+                return found
+
+    return None
+
+
+
 def request_me_zonal_prices(
     base_url: str,
     token: str,
@@ -269,7 +348,22 @@ def request_me_zonal_prices(
         json_filename = zipped_file.namelist()[0]
         json_data = json.loads(zipped_file.read(json_filename).decode("utf-8"))
 
-    return pd.DataFrame(json_data)
+    records = find_zone_price_records(json_data)
+    if records is None:
+        top_level_info = (
+            list(json_data.keys()) if isinstance(json_data, dict) else f"type={type(json_data).__name__}"
+        )
+        raise RuntimeError(
+            f"Could not find Zone/Price records for {date_str}. "
+            f"Top-level JSON information: {top_level_info}"
+        )
+
+    df = pd.DataFrame(records)
+    required_cols = {"Zone", "Price"}
+    if not required_cols.issubset(df.columns):
+        raise ValueError(f"GME response must contain columns {required_cols}. Got: {df.columns.tolist()}")
+
+    return df
 
 
 
@@ -318,26 +412,102 @@ def append_to_csv(csv_path: str | Path, new_data: pd.DataFrame) -> None:
     if csv_path.exists():
         existing = pd.read_csv(csv_path)
         combined = pd.concat([existing, new_data], ignore_index=True)
-        combined = combined.drop_duplicates(subset=["datetime"], keep="last")
-        combined = combined.sort_values("datetime")
-        combined.to_csv(csv_path, index=False)
-        print(f"Updated {csv_path} with {len(new_data)} candidate rows.")
     else:
-        new_data.to_csv(csv_path, index=False)
-        print(f"Created {csv_path} with {len(new_data)} rows.")
+        combined = new_data.copy()
+
+    combined["datetime"] = pd.to_datetime(combined["datetime"], utc=True, errors="coerce")
+    combined = combined.dropna(subset=["datetime"])
+    combined = combined.sort_values("datetime").drop_duplicates(subset=["datetime"], keep="last")
+    combined.to_csv(csv_path, index=False)
+
+    print(f"Saved/updated {csv_path} with {len(combined)} total rows.")
 
 
 
-def update_pun_nord_datasets(
+def get_available_market_dates(csv_path: str | Path, local_tz: ZoneInfo) -> set[dt.date]:
+    """Return the local market dates already available in a historical price CSV."""
+    csv_path = Path(csv_path)
+
+    if not csv_path.exists():
+        return set()
+
+    df = pd.read_csv(csv_path)
+    if "datetime" not in df.columns:
+        raise ValueError(f"{csv_path} must contain a 'datetime' column.")
+
+    timestamps_utc = pd.to_datetime(df["datetime"], utc=True, errors="coerce")
+    timestamps_local = timestamps_utc.dt.tz_convert(local_tz)
+
+    return set(timestamps_local.dt.date.dropna().unique())
+
+
+
+def date_range_inclusive(start_date: dt.date, end_date: dt.date) -> list[dt.date]:
+    """Return all dates in the inclusive interval [start_date, end_date]."""
+    if end_date < start_date:
+        return []
+
+    return [
+        start_date + dt.timedelta(days=offset)
+        for offset in range((end_date - start_date).days + 1)
+    ]
+
+
+
+def get_missing_market_dates(
+    pun_csv_path: str | Path,
+    nord_csv_path: str | Path,
+    target_market_date: dt.date,
+    local_tz: ZoneInfo,
+) -> list[dt.date]:
+    """Find market dates missing in either the PUN or NORD dataset.
+
+    The script needs historical prices up to target_market_date, which is
+    usually the day before the forecast date.
+    """
+    pun_dates = get_available_market_dates(pun_csv_path, local_tz)
+    nord_dates = get_available_market_dates(nord_csv_path, local_tz)
+
+    available_common_dates = pun_dates.intersection(nord_dates)
+
+    if not available_common_dates:
+        print("Warning: no common dates found in PUN and NORD datasets.")
+        print("The script will try to download only the required market date.")
+        return [target_market_date]
+
+    last_common_date = max(available_common_dates)
+
+    print(f"Latest PUN market date available:  {max(pun_dates) if pun_dates else 'none'}")
+    print(f"Latest NORD market date available: {max(nord_dates) if nord_dates else 'none'}")
+    print(f"Latest common market date:         {last_common_date}")
+    print(f"Market date required for forecast: {target_market_date}")
+
+    if last_common_date >= target_market_date:
+        return []
+
+    candidate_dates = date_range_inclusive(
+        start_date=last_common_date + dt.timedelta(days=1),
+        end_date=target_market_date,
+    )
+
+    return [
+        date_value
+        for date_value in candidate_dates
+        if date_value not in pun_dates or date_value not in nord_dates
+    ]
+
+
+
+def download_and_append_one_market_date(
     base_url: str,
+    token: str,
     market_date: dt.date,
     granularity: str,
     pun_csv_path: str | Path,
     nord_csv_path: str | Path,
     local_tz: ZoneInfo,
 ) -> None:
-    """Download and append market-date PUN and NORD prices."""
-    token = get_gme_auth_token(base_url)
+    """Download one market date from GME and append PUN/NORD prices to the CSVs."""
     print(f"Downloading GME zonal prices for {market_date} with granularity {granularity}.")
 
     df_prices = request_me_zonal_prices(
@@ -347,12 +517,16 @@ def update_pun_nord_datasets(
         granularity=granularity,
     )
 
-    required_cols = {"Zone", "Price"}
-    if not required_cols.issubset(df_prices.columns):
-        raise ValueError(f"GME response must contain columns {required_cols}. Got: {df_prices.columns.tolist()}")
-
-    pun_prices = df_prices.loc[df_prices["Zone"] == "PUN", "Price"].astype(float).reset_index(drop=True)
-    nord_prices = df_prices.loc[df_prices["Zone"] == "NORD", "Price"].astype(float).reset_index(drop=True)
+    pun_prices = (
+        df_prices.loc[df_prices["Zone"] == "PUN", "Price"]
+        .astype(float)
+        .reset_index(drop=True)
+    )
+    nord_prices = (
+        df_prices.loc[df_prices["Zone"] == "NORD", "Price"]
+        .astype(float)
+        .reset_index(drop=True)
+    )
 
     if pun_prices.empty:
         raise RuntimeError(f"No PUN prices returned for {market_date}.")
@@ -365,6 +539,62 @@ def update_pun_nord_datasets(
     append_to_csv(nord_csv_path, build_daily_zone_dataframe(market_date, nord_prices, local_tz))
 
 
+
+def update_missing_pun_nord_datasets(
+    base_url: str,
+    target_market_date: dt.date,
+    granularity: str,
+    pun_csv_path: str | Path,
+    nord_csv_path: str | Path,
+    local_tz: ZoneInfo,
+    sleep_seconds: float = 0.2,
+) -> None:
+    """Download and append only the missing PUN/NORD market dates."""
+    missing_dates = get_missing_market_dates(
+        pun_csv_path=pun_csv_path,
+        nord_csv_path=nord_csv_path,
+        target_market_date=target_market_date,
+        local_tz=local_tz,
+    )
+
+    if not missing_dates:
+        print(
+            f"PUN and NORD datasets already contain data up to {target_market_date}. "
+            "Skipping GME update."
+        )
+        return
+
+    print("Missing market dates to download from GME:")
+    for date_value in missing_dates:
+        print(f"- {date_value}")
+
+    token = get_gme_auth_token(base_url)
+
+    failed_dates = []
+    for date_value in missing_dates:
+        try:
+            download_and_append_one_market_date(
+                base_url=base_url,
+                token=token,
+                market_date=date_value,
+                granularity=granularity,
+                pun_csv_path=pun_csv_path,
+                nord_csv_path=nord_csv_path,
+                local_tz=local_tz,
+            )
+        except Exception as exc:
+            print(f"Warning: failed to download/process {date_value}: {exc}")
+            failed_dates.append(date_value)
+
+        if sleep_seconds > 0:
+            time.sleep(sleep_seconds)
+
+    if failed_dates:
+        failed_as_text = ", ".join(date_value.isoformat() for date_value in failed_dates)
+        print(f"Warning: these GME dates could not be updated: {failed_as_text}")
+        print("The forecast will continue using the existing historical CSV datasets.")
+
+
 # ======================================================================
 # LEAR forecasting
 # ======================================================================
@@ -374,7 +604,11 @@ def build_lear_dataframe_from_csv(csv_path: str | Path) -> pd.DataFrame:
     """Read a PUN/NORD CSV and build the dataframe expected by LEAR."""
     csv_path = Path(csv_path)
     if not csv_path.exists():
-        raise FileNotFoundError(f"Price history CSV not found: {csv_path}")
+        raise FileNotFoundError(
+            f"Price history CSV not found: {csv_path}. "
+            "Before running this script, provide the historical datasets "
+            "DAM_PRICES/PUN_dataset_final.csv and DAM_PRICES/NORD_dataset_final.csv."
+        )
 
     df = pd.read_csv(csv_path)
     if "datetime" not in df.columns or "price" not in df.columns:
@@ -391,6 +625,9 @@ def build_lear_dataframe_from_csv(csv_path: str | Path) -> pd.DataFrame:
     output["Price"] = pd.to_numeric(df["price"], errors="coerce")
     output = output.dropna(subset=["Price"])
 
+    if output.empty:
+        raise ValueError(f"No valid price data found in {csv_path}.")
+
     return output
 
 
@@ -403,6 +640,26 @@ def choose_small_flag(df: pd.DataFrame, calibration_window: int) -> bool:
 
 
 
+def validate_history_coverage(
+    df_hist: pd.DataFrame,
+    forecast_date_local: dt.date,
+    local_tz: ZoneInfo,
+    csv_path: str | Path,
+) -> None:
+    """Warn if the historical dataset does not reach the day before the forecast."""
+    required_market_date = forecast_date_local - dt.timedelta(days=1)
+    latest_utc = df_hist.index.max().tz_localize("UTC")
+    latest_local_date = latest_utc.tz_convert(local_tz).date()
+
+    if latest_local_date < required_market_date:
+        print(
+            f"Warning: {csv_path} only contains data up to local market date "
+            f"{latest_local_date}, but the forecast requires data up to "
+            f"{required_market_date}. The LEAR forecast may fail or be less reliable."
+        )
+
+
+
 def lear_forecast_next_day_from_csv(
     csv_path: str | Path,
     forecast_date_local: dt.date,
@@ -411,6 +668,7 @@ def lear_forecast_next_day_from_csv(
 ) -> pd.Series:
     """Run LEAR and return a 24-hour local-time forecast series."""
     df_hist = build_lear_dataframe_from_csv(csv_path).sort_index()
+    validate_history_coverage(df_hist, forecast_date_local, local_tz, csv_path)
 
     next_day_start_local = dt.datetime.combine(forecast_date_local, dt.time(0, 0), tzinfo=local_tz)
     next_day_start_utc_naive = next_day_start_local.astimezone(dt.timezone.utc).replace(tzinfo=None)
@@ -439,8 +697,7 @@ def lear_forecast_next_day_from_csv(
     )
 
     forecast = pd.Series(y_pred, index=future_index_local, name="Price_forecast")
-    forecast = forecast.clip(lower=0)
-    return forecast
+    return forecast.clip(lower=0)
 
 
 
@@ -531,27 +788,40 @@ def main() -> None:
     local_tz = ZoneInfo(args.local_timezone)
     forecast_date = parse_forecast_date(args.forecast_date, local_tz)
 
-    # Day-ahead prices for forecast_date are available from the market clearing on the previous day.
+    # Day-ahead prices for forecast_date are available from the market clearing
+    # on the previous local day.
     market_data_date = forecast_date - dt.timedelta(days=1)
 
     print("\n--- DAM price forecasting configuration ---")
     print(f"Forecast local date:       {forecast_date}")
-    print(f"Market data date to append:{market_data_date}")
+    print(f"Market data date required: {market_data_date}")
     print(f"Local timezone:            {args.local_timezone}")
     print(f"PUN CSV path:              {args.pun_csv_path}")
     print(f"NORD CSV path:             {args.nord_csv_path}")
     print(f"Forecasts directory:       {args.forecasts_dir}")
     print(f"Calibration window days:   {args.calibration_window_days}")
+    print(f"Skip GME update:           {args.skip_gme_update}")
     print(f"Upload to Optimo:          {args.upload_to_optimo}")
 
-    update_pun_nord_datasets(
-        base_url=args.gme_base_url,
-        market_date=market_data_date,
-        granularity=args.price_granularity,
-        pun_csv_path=args.pun_csv_path,
-        nord_csv_path=args.nord_csv_path,
-        local_tz=local_tz,
-    )
+    if args.skip_gme_update:
+        print("Skipping GME update. Forecast will use the existing historical CSV datasets.")
+    else:
+        try:
+            update_missing_pun_nord_datasets(
+                base_url=args.gme_base_url,
+                target_market_date=market_data_date,
+                granularity=args.price_granularity,
+                pun_csv_path=args.pun_csv_path,
+                nord_csv_path=args.nord_csv_path,
+                local_tz=local_tz,
+                sleep_seconds=args.gme_request_sleep_seconds,
+            )
+        except requests.exceptions.RequestException as exc:
+            print(f"Warning: GME update failed because of a network/API error: {exc}")
+            print("Continuing with the existing historical CSV datasets.")
+        except Exception as exc:
+            print(f"Warning: GME update failed: {exc}")
+            print("Continuing with the existing historical CSV datasets.")
 
     print(f"\nRunning LEAR forecasts for {forecast_date}.")
     pun_forecast = lear_forecast_next_day_from_csv(

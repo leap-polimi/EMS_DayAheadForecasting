@@ -12,6 +12,7 @@ DAM_PRICES/OptimoApi.py
 EL_LOAD/__pycache__/
 TH_LOAD/__pycache__/
 DAM_PRICES/__pycache__/
+DAM_PRICES/model_evaluation/__pycache__/
 
 # Virtual environments
 .venv/
@@ -29,10 +30,8 @@ TH_LOAD/models/
 TH_LOAD/results/
 TH_LOAD/forecasts/
 
-DAM_PRICES/dataset.xlsx
-DAM_PRICES/models/
-DAM_PRICES/results/
-DAM_PRICES/forecasts/
+DAM_PRICES/NORD_dataset_final.csv
+DAM_PRICES/PUN_dataset_final.csv
 
 
 
